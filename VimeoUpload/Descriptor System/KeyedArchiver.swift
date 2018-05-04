@@ -28,29 +28,48 @@ import Foundation
 
 public class KeyedArchiver: ArchiverProtocol
 {
-    private static let ArchiveExtension = "archive"
+    private struct Constants
+    {
+        static let QueueName = "com.vimeo.keyedArchiverQueue"
+        static let ArchiveExtension = "archive"
+    }
     
     private let basePath: String
+    private let serialQueue: DispatchQueue
 
     public init(basePath: String)
     {
         assert(FileManager.default.fileExists(atPath: basePath, isDirectory: nil), "Invalid basePath")
         
         self.basePath = basePath
+        
+        self.serialQueue = DispatchQueue(label: Constants.QueueName)
     }
     
     public func loadObject(for key: String) -> Any?
     {
-        let path = self.archivePath(key: key)
+        var object: Any?
         
-        return NSKeyedUnarchiver.unarchiveObject(withFile: path)
+        self.serialQueue.sync {
+            
+            let path = self.archivePath(key: key)
+            
+            object = NSKeyedUnarchiver.unarchiveObject(withFile: path)
+        }
+        
+        return object
     }
     
     public func save(object: Any, key: String)
     {
-        let path = self.archivePath(key: key)
-        
-        NSKeyedArchiver.archiveRootObject(object, toFile: path)
+        self.serialQueue.async { [weak self] in
+            
+            guard let strongSelf = self else { return }
+            
+            let path = strongSelf.archivePath(key: key)
+            
+            NSKeyedArchiver.archiveRootObject(object, toFile: path)
+        }
     }
     
     // MARK: Utilities
@@ -60,7 +79,7 @@ public class KeyedArchiver: ArchiverProtocol
         var url = URL(string: self.basePath)!
         
         url = url.appendingPathComponent(key)
-        url = url.appendingPathExtension(type(of: self).ArchiveExtension)
+        url = url.appendingPathExtension(type(of: self).Constants.ArchiveExtension)
         
         return url.absoluteString as String
     }
